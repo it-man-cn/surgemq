@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/it-man-cn/message"
+	"github.com/it-man-cn/surgemq/service"
 	"github.com/surge/glog"
-	"github.com/surgemq/message"
-	"github.com/surgemq/surgemq/service"
 )
 
 // Usage: go test -run=Mesh
