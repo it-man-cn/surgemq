@@ -19,7 +19,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/surgemq/message"
+	"github.com/it-man-cn/message"
 )
 
 var (
@@ -58,6 +58,10 @@ func NewMemProvider() *memTopics {
 	}
 }
 
+//0x00 success max Qos 0
+//0x01 success max Qos 1
+//0x02 success max Qos 2
+//0x80 Failure
 func (this *memTopics) Subscribe(topic []byte, qos byte, sub interface{}) (byte, error) {
 	if !message.ValidQos(qos) {
 		return message.QosFailure, fmt.Errorf("Invalid QoS %d", qos)
@@ -161,8 +165,8 @@ func (this *snode) sinsert(topic []byte, qos byte, sub interface{}) error {
 		}
 
 		// Otherwise add.
-		this.subs = append(this.subs, sub)
-		this.qos = append(this.qos, qos)
+		this.subs = append(this.subs, sub) //snode subs []interface{}
+		this.qos = append(this.qos, qos)   //snode qos  []byte
 
 		return nil
 	}
@@ -253,7 +257,7 @@ func (this *snode) smatch(topic []byte, qos byte, subs *[]interface{}, qoss *[]b
 	// If the topic is empty, it means we are at the final matching snode. If so,
 	// let's find the subscribers that match the qos and append them to the list.
 	if len(topic) == 0 {
-		this.matchQos(qos, subs, qoss)
+		this.matchQos(qos, subs, qoss) //将当前level中qos大于等于当前qos的sub、qos增加到subs和qoss slice后面。
 		return nil
 	}
 
@@ -332,7 +336,7 @@ func (this *rnode) rinsert(topic []byte, msg *message.PublishMessage) error {
 		return err
 	}
 
-	level := string(ntl)
+	level := string(ntl) //当前层
 
 	// Add snode if it doesn't already exist
 	n, ok := this.rnodes[level]
@@ -445,7 +449,7 @@ const (
 	stateSYS             // System level topic ($)
 )
 
-// Returns topic level, remaining topic levels and any errors
+// Returns topic level, remaining topic levels and any errors,每次匹配一层
 func nextTopicLevel(topic []byte) ([]byte, []byte, error) {
 	s := stateCHR
 
@@ -484,7 +488,7 @@ func nextTopicLevel(topic []byte) ([]byte, []byte, error) {
 			s = stateSYS
 
 		default:
-			if s == stateMWC || s == stateSWC {
+			if s == stateMWC || s == stateSWC { //通配符
 				return nil, nil, fmt.Errorf("memtopics/nextTopicLevel: Wildcard characters '#' and '+' must occupy entire topic level")
 			}
 

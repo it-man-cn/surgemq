@@ -72,7 +72,7 @@ func NewManager(providerName string) (*Manager, error) {
 
 func (this *Manager) New(id string) (*Session, error) {
 	if id == "" {
-		id = this.sessionId()
+		id = this.sessionId() //如果clientID为空，生成一个随机的session id，sessionID的意义在哪？。这个sessionID怎么让client知道？？？
 	}
 	return this.p.New(id)
 }

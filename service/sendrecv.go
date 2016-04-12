@@ -21,8 +21,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/it-man-cn/message"
 	"github.com/surge/glog"
-	"github.com/surgemq/message"
 )
 
 type netReader interface {
@@ -64,7 +64,7 @@ func (this *service) receiver() {
 		//glog.Debugf("server/handleConnection: Setting read deadline to %d", time.Second*time.Duration(this.keepAlive))
 		keepAlive := time.Second * time.Duration(this.keepAlive)
 		r := timeoutReader{
-			d:    keepAlive + (keepAlive / 2),
+			d:    keepAlive + (keepAlive / 2), //???意义
 			conn: conn,
 		}
 
@@ -131,14 +131,15 @@ func (this *service) peekMessageSize() (message.MessageType, int, error) {
 	var (
 		b   []byte
 		err error
-		cnt int = 2
+		cnt int = 2 //msg type + reamining length
 	)
-
+	//in buffer is nil
 	if this.in == nil {
 		err = ErrBufferNotReady
 		return 0, 0, err
 	}
 
+	//只读取消息头部
 	// Let's read enough bytes to get the message header (msg type, remaining length)
 	for {
 		// If we have read 5 bytes and still not done, then there's a problem.
@@ -153,13 +154,13 @@ func (this *service) peekMessageSize() (message.MessageType, int, error) {
 		}
 
 		// If not enough bytes are returned, then continue until there's enough.
-		if len(b) < cnt {
+		if len(b) < cnt { //还没有读取足够的数据
 			continue
 		}
 
 		// If we got enough bytes, then check the last byte to see if the continuation
 		// bit is set. If so, increment cnt and continue peeking
-		if b[cnt-1] >= 0x80 {
+		if b[cnt-1] >= 0x80 { //因为remaining length是变长编码方案，最高位表示没有更多的字节，如果最高位为1表示再读取一位
 			cnt++
 		} else {
 			break
@@ -168,11 +169,12 @@ func (this *service) peekMessageSize() (message.MessageType, int, error) {
 
 	// Get the remaining length of the message
 	remlen, m := binary.Uvarint(b[1:])
-
+	//消息总长度：消息类型1字节+剩余长度（变长编码方案)+剩余长度的值
+	//剩余长度编码方案：1小于128使用单字节编码。低7位有效位用于编码数据，最高位表示是否有更多的字节。每个字节可以编码128个数和一个延续位。剩余长度字段最大4个字节。
 	// Total message length is remlen + 1 (msg type) + m (remlen bytes)
 	total := int(remlen) + 1 + m
 
-	mtype := message.MessageType(b[0] >> 4)
+	mtype := message.MessageType(b[0] >> 4) //消息类型
 
 	return mtype, total, err
 }

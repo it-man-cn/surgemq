@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/surgemq/message"
+	"github.com/it-man-cn/message"
 )
 
 const (
@@ -121,11 +121,11 @@ func (this *Session) Update(msg *message.ConnectMessage) error {
 
 	this.cbuf = make([]byte, msg.Len())
 	this.Cmsg = message.NewConnectMessage()
-
+	//将connectmsg的内容编码成字节数组，保存到当前session的cbuf中
 	if _, err := msg.Encode(this.cbuf); err != nil {
 		return err
 	}
-
+	//将cbuf解码成connectmsg对象，保存到session中的Cmsg，直接copy msg给Cmsg不就好了，为什么还得经过解码
 	if _, err := this.Cmsg.Decode(this.cbuf); err != nil {
 		return err
 	}

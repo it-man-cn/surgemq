@@ -24,11 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/it-man-cn/message"
+	"github.com/it-man-cn/surgemq/auth"
+	"github.com/it-man-cn/surgemq/sessions"
+	"github.com/it-man-cn/surgemq/topics"
 	"github.com/surge/glog"
-	"github.com/surgemq/message"
-	"github.com/surgemq/surgemq/auth"
-	"github.com/surgemq/surgemq/sessions"
-	"github.com/surgemq/surgemq/topics"
 )
 
 var (
@@ -39,7 +39,7 @@ var (
 )
 
 const (
-	DefaultKeepAlive        = 300
+	DefaultKeepAlive        = 300 //5分钟
 	DefaultConnectTimeout   = 2
 	DefaultAckTimeout       = 20
 	DefaultTimeoutRetries   = 3
@@ -119,8 +119,9 @@ type Server struct {
 // supplied should be of the form "protocol://host:port" that can be parsed by
 // url.Parse(). For example, an URI could be "tcp://0.0.0.0:1883".
 func (this *Server) ListenAndServe(uri string) error {
+	//???
 	defer atomic.CompareAndSwapInt32(&this.running, 1, 0)
-
+	//???
 	if !atomic.CompareAndSwapInt32(&this.running, 0, 1) {
 		return fmt.Errorf("server/ListenAndServe: Server is already running")
 	}
@@ -161,7 +162,7 @@ func (this *Server) ListenAndServe(uri string) error {
 				} else {
 					tempDelay *= 2
 				}
-				if max := 1 * time.Second; tempDelay > max {
+				if max := 1 * time.Second; tempDelay > max { //接收失败等待时间不超过1秒
 					tempDelay = max
 				}
 				glog.Errorf("server/ListenAndServe: Accept error: %v; retrying in %v", err, tempDelay)
@@ -170,7 +171,7 @@ func (this *Server) ListenAndServe(uri string) error {
 			}
 			return err
 		}
-
+		//处理新的连接请求，请求建立成功后会进入会话保持阶段
 		go this.handleConnection(conn)
 	}
 }
@@ -250,7 +251,7 @@ func (this *Server) handleConnection(c io.Closer) (svc *service, err error) {
 			c.Close()
 		}
 	}()
-
+	//仅执行一次，为什么这在这里，放到服务初始化时不行吗？
 	err = this.checkConfiguration()
 	if err != nil {
 		return nil, err
@@ -273,22 +274,25 @@ func (this *Server) handleConnection(c io.Closer) (svc *service, err error) {
 	// Read the CONNECT message from the wire, if error, then check to see if it's
 	// a CONNACK error. If it's CONNACK error, send the proper CONNACK error back
 	// to client. Exit regardless of error type.
-
+	//每个连接都要设置超时，可以用最小堆来优化，参考goim
+	//KeepAlive与ConnectTimeout的区别？？？
 	conn.SetReadDeadline(time.Now().Add(time.Second * time.Duration(this.ConnectTimeout)))
 
+	//构造Connect响应
 	resp := message.NewConnackMessage()
 
+	//解析ConnectMessage
 	req, err := getConnectMessage(conn)
-	if err != nil {
+	if err != nil { //解析出错
 		if cerr, ok := err.(message.ConnackCode); ok {
 			//glog.Debugf("request   message: %s\nresponse message: %s\nerror           : %v", mreq, resp, err)
 			resp.SetReturnCode(cerr)
 			resp.SetSessionPresent(false)
-			writeMessage(conn, resp)
+			writeMessage(conn, resp) //写响应
 		}
 		return nil, err
 	}
-
+	// 权限验证
 	// Authenticate the user, if error, return error and exit
 	if err = this.authMgr.Authenticate(string(req.Username()), string(req.Password())); err != nil {
 		resp.SetReturnCode(message.ErrBadUsernameOrPassword)
@@ -302,33 +306,33 @@ func (this *Server) handleConnection(c io.Closer) (svc *service, err error) {
 	}
 
 	svc = &service{
-		id:     atomic.AddUint64(&gsvcid, 1),
-		client: false,
+		id:     atomic.AddUint64(&gsvcid, 1), //ID累加与clientID无关
+		client: false,                        //Is this a client or server
 
 		keepAlive:      int(req.KeepAlive()),
 		connectTimeout: this.ConnectTimeout,
 		ackTimeout:     this.AckTimeout,
-		timeoutRetries: this.TimeoutRetries,
+		timeoutRetries: this.TimeoutRetries, //超时重传次数
 
 		conn:      conn,
 		sessMgr:   this.sessMgr,
 		topicsMgr: this.topicsMgr,
 	}
-
+	//获取session
 	err = this.getSession(svc, req, resp)
 	if err != nil {
 		return nil, err
 	}
-
+	//设置ConnectACK响应状态为接收请求
 	resp.SetReturnCode(message.ConnectionAccepted)
-
+	//写加Connect响应
 	if err = writeMessage(c, resp); err != nil {
 		return nil, err
 	}
-
+	//接收、发送流量统计
 	svc.inStat.increment(int64(req.Len()))
 	svc.outStat.increment(int64(resp.Len()))
-
+	//开始进入接收发数据阶段（保持会话阶段）
 	if err := svc.start(); err != nil {
 		svc.stop()
 		return nil, err
@@ -410,7 +414,7 @@ func (this *Server) getSession(svc *service, req *message.ConnectMessage, resp *
 	// clean session.
 	if len(req.ClientId()) == 0 {
 		req.SetClientId([]byte(fmt.Sprintf("internalclient%d", svc.id)))
-		req.SetCleanSession(true)
+		req.SetCleanSession(true) //connect msg连接标志位clean session设置为1
 	}
 
 	cid := string(req.ClientId())
@@ -418,9 +422,9 @@ func (this *Server) getSession(svc *service, req *message.ConnectMessage, resp *
 	// If CleanSession is NOT set, check the session store for existing session.
 	// If found, return it.
 	if !req.CleanSession() {
-		if svc.sess, err = this.sessMgr.Get(cid); err == nil {
-			resp.SetSessionPresent(true)
-
+		if svc.sess, err = this.sessMgr.Get(cid); err == nil { //从sessions map中查找cid对应session是否存在
+			resp.SetSessionPresent(true) //设置connack的连接确认标志位的session present标志为1，
+			//更新当前service的session中的connect msg对象为当前connect msg
 			if err := svc.sess.Update(req); err != nil {
 				return err
 			}
@@ -433,8 +437,8 @@ func (this *Server) getSession(svc *service, req *message.ConnectMessage, resp *
 			return err
 		}
 
-		resp.SetSessionPresent(false)
-
+		resp.SetSessionPresent(false) //设置session存在标志为false，并通知client
+		//初始化session对象
 		if err := svc.sess.Init(req); err != nil {
 			return err
 		}

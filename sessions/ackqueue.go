@@ -20,7 +20,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/surgemq/message"
+	"github.com/it-man-cn/message"
 )
 
 var (
@@ -75,7 +75,7 @@ type Ackqueue struct {
 	tail  int64
 
 	ping ackmsg
-	ring []ackmsg
+	ring []ackmsg //???
 	emap map[uint16]int64
 
 	ackdone []ackmsg
@@ -102,7 +102,7 @@ func newAckqueue(n int) *Ackqueue {
 }
 
 // Wait() copies the message into a waiting queue, and waits for the corresponding
-// ack message to be received.
+// ack message to be received.放入等待确认的消息
 func (this *Ackqueue) Wait(msg message.Message, onComplete interface{}) error {
 	this.mu.Lock()
 	defer this.mu.Unlock()

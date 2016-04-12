@@ -20,9 +20,9 @@ import (
 	"io"
 	"reflect"
 
+	"github.com/it-man-cn/message"
+	"github.com/it-man-cn/surgemq/sessions"
 	"github.com/surge/glog"
-	"github.com/surgemq/message"
-	"github.com/surgemq/surgemq/sessions"
 )
 
 var (
@@ -56,7 +56,7 @@ func (this *service) processor() {
 			//}
 			return
 		}
-
+		//从in buffer中读取消息，但暂时不改变offset，让消息继续存放在in buffer中
 		msg, n, err := this.peekMessage(mtype, total)
 		if err != nil {
 			//if err != io.EOF {
@@ -66,7 +66,7 @@ func (this *service) processor() {
 		}
 
 		//glog.Debugf("(%s) Received: %s", this.cid(), msg)
-
+		//累加读取字节数
 		this.inStat.increment(int64(n))
 
 		// 5. Process the read message
@@ -80,7 +80,7 @@ func (this *service) processor() {
 		}
 
 		// 7. We should commit the bytes in the buffer so we can move on
-		_, err = this.in.ReadCommit(total)
+		_, err = this.in.ReadCommit(total) //处理偏移，正式读取数据
 		if err != nil {
 			if err != io.EOF {
 				glog.Errorf("(%s) Error committing %d read bytes: %v", this.cid(), total, err)
@@ -103,21 +103,21 @@ func (this *service) processIncoming(msg message.Message) error {
 	var err error = nil
 
 	switch msg := msg.(type) {
-	case *message.PublishMessage:
+	case *message.PublishMessage: //客户端-->服务端、服务端-->客户端
 		// For PUBLISH message, we should figure out what QoS it is and process accordingly
 		// If QoS == 0, we should just take the next step, no ack required
 		// If QoS == 1, we should send back PUBACK, then take the next step
 		// If QoS == 2, we need to put it in the ack queue, send back PUBREC
 		err = this.processPublish(msg)
 
-	case *message.PubackMessage:
+	case *message.PubackMessage: //客户端-->服务端、服务端-->客户端
 		// For PUBACK message, it means QoS 1, we should send to ack queue
 		this.sess.Pub1ack.Ack(msg)
 		this.processAcked(this.sess.Pub1ack)
 
-	case *message.PubrecMessage:
+	case *message.PubrecMessage: //客户端-->服务端、服务端-->客户端
 		// For PUBREC message, it means QoS 2, we should send to ack queue, and send back PUBREL
-		if err = this.sess.Pub2out.Ack(msg); err != nil {
+		if err = this.sess.Pub2out.Ack(msg); err != nil { //服务端向外发布QoS 2消息，等于更新确认状态，修改状态为PUBREL。QoS 2收到ACK
 			break
 		}
 
@@ -125,54 +125,54 @@ func (this *service) processIncoming(msg message.Message) error {
 		resp.SetPacketId(msg.PacketId())
 		_, err = this.writeMessage(resp)
 
-	case *message.PubrelMessage:
+	case *message.PubrelMessage: //客户端-->服务端、服务端-->客户端 ，发布释放（QoS 2,第二步）
 		// For PUBREL message, it means QoS 2, we should send to ack queue, and send back PUBCOMP
-		if err = this.sess.Pub2in.Ack(msg); err != nil {
+		if err = this.sess.Pub2in.Ack(msg); err != nil { //放入到已确认消息ring buffer中
 			break
 		}
-
+		//发布QoS 2消息
 		this.processAcked(this.sess.Pub2in)
-
+		//QoS 2发布完成
 		resp := message.NewPubcompMessage()
 		resp.SetPacketId(msg.PacketId())
 		_, err = this.writeMessage(resp)
 
-	case *message.PubcompMessage:
+	case *message.PubcompMessage: //客户端-->服务端、服务端-->客户端
 		// For PUBCOMP message, it means QoS 2, we should send to ack queue
-		if err = this.sess.Pub2out.Ack(msg); err != nil {
+		if err = this.sess.Pub2out.Ack(msg); err != nil { //服务端向外发布QoS 2消息，修改状态为PUBCOMP；QOS 2消息发布完成。
 			break
 		}
 
 		this.processAcked(this.sess.Pub2out)
 
-	case *message.SubscribeMessage:
+	case *message.SubscribeMessage: //客户端-->服务端
 		// For SUBSCRIBE message, we should add subscriber, then send back SUBACK
 		return this.processSubscribe(msg)
 
-	case *message.SubackMessage:
+	case *message.SubackMessage: //服务端-->客户端
 		// For SUBACK message, we should send to ack queue
 		this.sess.Suback.Ack(msg)
 		this.processAcked(this.sess.Suback)
 
-	case *message.UnsubscribeMessage:
+	case *message.UnsubscribeMessage: //客户端-->服务端
 		// For UNSUBSCRIBE message, we should remove subscriber, then send back UNSUBACK
 		return this.processUnsubscribe(msg)
 
-	case *message.UnsubackMessage:
+	case *message.UnsubackMessage: //服务端-->客户端
 		// For UNSUBACK message, we should send to ack queue
 		this.sess.Unsuback.Ack(msg)
 		this.processAcked(this.sess.Unsuback)
 
-	case *message.PingreqMessage:
+	case *message.PingreqMessage: //客户端-->服务端
 		// For PINGREQ message, we should send back PINGRESP
 		resp := message.NewPingrespMessage()
 		_, err = this.writeMessage(resp)
 
-	case *message.PingrespMessage:
+	case *message.PingrespMessage: //服务端-->客户端
 		this.sess.Pingack.Ack(msg)
 		this.processAcked(this.sess.Pingack)
 
-	case *message.DisconnectMessage:
+	case *message.DisconnectMessage: //客户端-->服务端
 		// For DISCONNECT message, we should quit
 		this.sess.Cmsg.SetWillFlag(false)
 		return errDisconnect
@@ -188,6 +188,7 @@ func (this *service) processIncoming(msg message.Message) error {
 	return err
 }
 
+//处理已确认事件
 func (this *service) processAcked(ackq *sessions.Ackqueue) {
 	for _, ackmsg := range ackq.Acked() {
 		// Let's get the messages from the saved message byte slices.
@@ -197,18 +198,18 @@ func (this *service) processAcked(ackq *sessions.Ackqueue) {
 			continue
 		}
 
-		if _, err := msg.Decode(ackmsg.Msgbuf); err != nil {
+		if _, err := msg.Decode(ackmsg.Msgbuf); err != nil { //???
 			glog.Errorf("process/processAcked: Unable to decode %s message: %v", ackmsg.Mtype, err)
 			continue
 		}
 
-		ack, err := ackmsg.State.New()
+		ack, err := ackmsg.State.New() //???
 		if err != nil {
 			glog.Errorf("process/processAcked: Unable to creating new %s message: %v", ackmsg.State, err)
 			continue
 		}
 
-		if _, err := ack.Decode(ackmsg.Ackbuf); err != nil {
+		if _, err := ack.Decode(ackmsg.Ackbuf); err != nil { //???
 			glog.Errorf("process/processAcked: Unable to decode %s message: %v", ackmsg.State, err)
 			continue
 		}
@@ -273,9 +274,9 @@ func (this *service) processAcked(ackq *sessions.Ackqueue) {
 func (this *service) processPublish(msg *message.PublishMessage) error {
 	switch msg.QoS() {
 	case message.QosExactlyOnce:
-		this.sess.Pub2in.Wait(msg, nil)
+		this.sess.Pub2in.Wait(msg, nil) //放入等待队列，等待相应ACK消息
 
-		resp := message.NewPubrecMessage()
+		resp := message.NewPubrecMessage() //发布收到（QoS 2,第一步）
 		resp.SetPacketId(msg.PacketId())
 
 		_, err := this.writeMessage(resp)
@@ -300,8 +301,8 @@ func (this *service) processPublish(msg *message.PublishMessage) error {
 
 // For SUBSCRIBE message, we should add subscriber, then send back SUBACK
 func (this *service) processSubscribe(msg *message.SubscribeMessage) error {
-	resp := message.NewSubackMessage()
-	resp.SetPacketId(msg.PacketId())
+	resp := message.NewSubackMessage() //新建SUBACK响应
+	resp.SetPacketId(msg.PacketId())   //设置SUBACK与SUBSCRIBE相同的标识符
 
 	// Subscribe to the different topics
 	var retcodes []byte
@@ -312,17 +313,17 @@ func (this *service) processSubscribe(msg *message.SubscribeMessage) error {
 	this.rmsgs = this.rmsgs[0:0]
 
 	for i, t := range topics {
-		rqos, err := this.topicsMgr.Subscribe(t, qos[i], &this.onpub)
+		rqos, err := this.topicsMgr.Subscribe(t, qos[i], &this.onpub) //添加订阅
 		if err != nil {
 			return err
 		}
-		this.sess.AddTopic(string(t), qos[i])
+		this.sess.AddTopic(string(t), qos[i]) //在session保存topic与qos的对应关系
 
 		retcodes = append(retcodes, rqos)
 
 		// yeah I am not checking errors here. If there's an error we don't want the
 		// subscription to stop, just let it go.
-		this.topicsMgr.Retained(t, &this.rmsgs)
+		this.topicsMgr.Retained(t, &this.rmsgs) //??? 查看topic和qos对应的保留消息，如何来的保留消息
 		glog.Debugf("(%s) topic = %s, retained count = %d", this.cid(), string(t), len(this.rmsgs))
 	}
 
@@ -333,7 +334,7 @@ func (this *service) processSubscribe(msg *message.SubscribeMessage) error {
 	if _, err := this.writeMessage(resp); err != nil {
 		return err
 	}
-
+	//发布会话中保留的消息
 	for _, rm := range this.rmsgs {
 		if err := this.publish(rm, nil); err != nil {
 			glog.Errorf("service/processSubscribe: Error publishing retained message: %v", err)
@@ -364,12 +365,12 @@ func (this *service) processUnsubscribe(msg *message.UnsubscribeMessage) error {
 // the ack cycle. This method will get the list of subscribers based on the publish
 // topic, and publishes the message to the list of subscribers.
 func (this *service) onPublish(msg *message.PublishMessage) error {
-	if msg.Retain() {
+	if msg.Retain() { //????作用
 		if err := this.topicsMgr.Retain(msg); err != nil {
 			glog.Errorf("(%s) Error retaining message: %v", this.cid(), err)
 		}
 	}
-
+	//获得与当前publishmessage主题和QoS相匹配的订阅者和订阅者对应QoS
 	err := this.topicsMgr.Subscribers(msg.Topic(), msg.QoS(), &this.subs, &this.qoss)
 	if err != nil {
 		glog.Errorf("(%s) Error retrieving subscribers list: %v", this.cid(), err)
@@ -377,7 +378,7 @@ func (this *service) onPublish(msg *message.PublishMessage) error {
 	}
 
 	msg.SetRetain(false)
-
+	//发送消息到与本主题相关的订阅者
 	//glog.Debugf("(%s) Publishing to topic %q and %d subscribers", this.cid(), string(msg.Topic()), len(this.subs))
 	for _, s := range this.subs {
 		if s != nil {
@@ -386,7 +387,7 @@ func (this *service) onPublish(msg *message.PublishMessage) error {
 				glog.Errorf("Invalid onPublish Function")
 				return fmt.Errorf("Invalid onPublish Function")
 			} else {
-				(*fn)(msg)
+				(*fn)(msg) //根据消息主题，将消息发送给订阅者
 			}
 		}
 	}

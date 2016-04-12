@@ -20,10 +20,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/it-man-cn/message"
+	"github.com/it-man-cn/surgemq/sessions"
+	"github.com/it-man-cn/surgemq/topics"
 	"github.com/surge/glog"
-	"github.com/surgemq/message"
-	"github.com/surgemq/surgemq/sessions"
-	"github.com/surgemq/surgemq/topics"
 )
 
 type (
@@ -153,8 +153,10 @@ func (this *service) start() error {
 		// If this is a recovered session, then add any topics it subscribed before
 		topics, qoss, err := this.sess.Topics()
 		if err != nil {
+			//新的session还没初始化过，也没有订阅过主题
 			return err
 		} else {
+			//恢复连接后的session，已经初始化过，恢复之前的订阅
 			for i, t := range topics {
 				this.topicsMgr.Subscribe([]byte(t), qoss[i], &this.onpub)
 			}
@@ -165,18 +167,18 @@ func (this *service) start() error {
 	// them accordingly.
 	this.wgStarted.Add(1)
 	this.wgStopped.Add(1)
-	go this.processor()
+	go this.processor() //数据加工
 
 	// Receiver is responsible for reading from the connection and putting data into
 	// a buffer.
 	this.wgStarted.Add(1)
 	this.wgStopped.Add(1)
-	go this.receiver()
+	go this.receiver() //接收数据存入in buffer
 
 	// Sender is responsible for writing data in the buffer into the connection.
 	this.wgStarted.Add(1)
 	this.wgStopped.Add(1)
-	go this.sender()
+	go this.sender() //发送out buffer中的数据
 
 	// Wait for all the goroutines to start before returning
 	this.wgStarted.Wait()
@@ -255,6 +257,8 @@ func (this *service) stop() {
 	this.out = nil
 }
 
+//服务端发布消息
+//onComplete意义
 func (this *service) publish(msg *message.PublishMessage, onComplete OnCompleteFunc) error {
 	//glog.Debugf("service/publish: Publishing %s", msg)
 	_, err := this.writeMessage(msg)
@@ -271,10 +275,10 @@ func (this *service) publish(msg *message.PublishMessage, onComplete OnCompleteF
 		return nil
 
 	case message.QosAtLeastOnce:
-		return this.sess.Pub1ack.Wait(msg, onComplete)
+		return this.sess.Pub1ack.Wait(msg, onComplete) //服务端向外发布QoS 1消息，加入等待确认队列
 
 	case message.QosExactlyOnce:
-		return this.sess.Pub2out.Wait(msg, onComplete)
+		return this.sess.Pub2out.Wait(msg, onComplete) //服务端向外发布QoS 2消息，加入等待确认队列
 	}
 
 	return nil
