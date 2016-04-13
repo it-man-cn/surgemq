@@ -75,6 +75,9 @@ func (this *service) receiver() {
 				if !IsEOF(err) {
 					glog.Errorf("(%s) error reading from connection: %v", this.cid(), err)
 				}
+				//离线，计数器减1
+				//TODO
+				ClientsCounter(false)
 				return
 			}
 		}

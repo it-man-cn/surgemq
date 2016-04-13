@@ -36,6 +36,9 @@ var (
 	ErrInvalidSubscriber      error = errors.New("service: Invalid subscriber")
 	ErrBufferNotReady         error = errors.New("service: buffer is not ready")
 	ErrBufferInsufficientData error = errors.New("service: buffer has insufficient data.")
+	//add counter
+	counterLock    sync.RWMutex
+	clinetsCounter int64
 )
 
 const (
@@ -329,6 +332,8 @@ func (this *Server) handleConnection(c io.Closer) (svc *service, err error) {
 	if err = writeMessage(c, resp); err != nil {
 		return nil, err
 	}
+	//在线人数加1
+	ClientsCounter(true)
 	//接收、发送流量统计
 	svc.inStat.increment(int64(req.Len()))
 	svc.outStat.increment(int64(resp.Len()))
@@ -445,4 +450,20 @@ func (this *Server) getSession(svc *service, req *message.ConnectMessage, resp *
 	}
 
 	return nil
+}
+
+func ClientsCounter(incr bool) {
+	counterLock.Lock()
+	defer counterLock.Unlock()
+	if incr {
+		clinetsCounter++
+	} else {
+		clinetsCounter--
+	}
+}
+
+func OnlineCount() int64 {
+	counterLock.RLock()
+	defer counterLock.RUnlock()
+	return clinetsCounter
 }

@@ -96,23 +96,11 @@ func main() {
 	}()
 
 	mqttaddr := "tcp://:1883"
-
-	if len(wsAddr) > 0 || len(wssAddr) > 0 {
-		addr := "tcp://127.0.0.1:1883"
-		AddWebsocketHandler("/mqtt", addr)
-		/* start a plain websocket listener */
-		if len(wsAddr) > 0 {
-			go ListenAndServeWebsocket(wsAddr)
-		}
-		/* start a secure websocket listener */
-		if len(wssAddr) > 0 && len(wssCertPath) > 0 && len(wssKeyPath) > 0 {
-			go ListenAndServeWebsocketSecure(wssAddr, wssCertPath, wssKeyPath)
-		}
-	}
-
+	service.InitHTTP("localhost:7172")
 	/* create plain MQTT listener */
 	err = svr.ListenAndServe(mqttaddr)
 	if err != nil {
 		glog.Errorf("surgemq/main: %v", err)
 	}
+
 }
