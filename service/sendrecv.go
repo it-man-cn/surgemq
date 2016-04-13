@@ -72,7 +72,7 @@ func (this *service) receiver() {
 			_, err := this.in.ReadFrom(r)
 
 			if err != nil {
-				if err != io.EOF {
+				if !IsEOF(err) {
 					glog.Errorf("(%s) error reading from connection: %v", this.cid(), err)
 				}
 				return
@@ -320,4 +320,21 @@ func (this *service) writeMessage(msg message.Message) (int, error) {
 	this.outStat.increment(int64(m))
 
 	return m, nil
+}
+
+func IsEOF(err error) bool {
+	if err == nil {
+		return false
+	} else if err == io.EOF {
+		return true
+	} else if oerr, ok := err.(*net.OpError); ok {
+		if oerr.Err.Error() == "use of closed network connection" {
+			return true
+		}
+	} else {
+		if err.Error() == "use of closed network connection" {
+			return true
+		}
+	}
+	return false
 }

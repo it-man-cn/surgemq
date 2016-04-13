@@ -17,7 +17,6 @@ package service
 import (
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 
 	"github.com/it-man-cn/message"
@@ -51,8 +50,11 @@ func (this *service) processor() {
 		// 1. Find out what message is next and the size of the message
 		mtype, total, err := this.peekMessageSize()
 		if err != nil {
+			if !IsEOF(err) {
+				glog.Errorf("(%s) Error peeking next message size: %v", this.cid(), err)
+			}
 			//if err != io.EOF {
-			glog.Errorf("(%s) Error peeking next message size: %v", this.cid(), err)
+
 			//}
 			return
 		}
@@ -60,7 +62,9 @@ func (this *service) processor() {
 		msg, n, err := this.peekMessage(mtype, total)
 		if err != nil {
 			//if err != io.EOF {
-			glog.Errorf("(%s) Error peeking next message: %v", this.cid(), err)
+			if !IsEOF(err) {
+				glog.Errorf("(%s) Error peeking next message: %v", this.cid(), err)
+			}
 			//}
 			return
 		}
@@ -82,7 +86,7 @@ func (this *service) processor() {
 		// 7. We should commit the bytes in the buffer so we can move on
 		_, err = this.in.ReadCommit(total) //处理偏移，正式读取数据
 		if err != nil {
-			if err != io.EOF {
+			if !IsEOF(err) {
 				glog.Errorf("(%s) Error committing %d read bytes: %v", this.cid(), total, err)
 			}
 			return
